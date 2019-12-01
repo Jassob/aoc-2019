@@ -1,5 +1,6 @@
 module Main where
 
+import           Data.List                      ( unfoldr )
 import           System.Environment             ( getArgs )
 
 import           Types
@@ -11,7 +12,15 @@ part1 :: [Mass] -> Int
 part1 = getFuel . sum . map calculateFuel
 
 part2 :: [Mass] -> Int
-part2 = undefined
+part2 = getFuel . sum . map allFuel
+
+allFuel :: Mass -> Fuel
+allFuel = sum . unfoldr go
+ where
+  go :: Mass -> Maybe (Fuel, Mass)
+  go m | getFuel m' > 0 = pure (m', Mass . getFuel $ m')
+       | otherwise      = Nothing
+    where m' = calculateFuel m
 
 main :: IO ()
 main = do
@@ -44,6 +53,7 @@ runTestSuite :: IO ()
 runTestSuite = either putStrLn (const $ putStrLn "All tests passed!") $ do
   runTests calcFuelTests
   runTests [part1Test]
+  runTests allFuelTests
 
 data TestCase i o = TC
   { input :: i
@@ -86,3 +96,11 @@ part1Test = TC { name     = "Part1"
                , input    = map Mass [12, 14, 1969, 100765]
                , fun      = part1
                }
+
+allFuelTests :: [TestCase Mass Fuel]
+allFuelTests = map
+  (mkTC allFuel)
+  [ ("allFuel 14"    , Mass 14    , 2)
+  , ("allFuel 1969"  , Mass 1969  , 966)
+  , ("allFuel 100756", Mass 100756, 50346)
+  ]
