@@ -1,6 +1,5 @@
 module Main where
 
-import           Data.List                      ( foldl' )
 import           System.Environment             ( getArgs )
 
 import           Types
@@ -9,7 +8,7 @@ readInput :: String -> [Mass]
 readInput = map (Mass . read) . lines
 
 part1 :: [Mass] -> Int
-part1 = getFuel . foldl' (+) 0 . map calculateFuel
+part1 = getFuel . sum . map calculateFuel
 
 part2 :: [Mass] -> Int
 part2 = undefined
