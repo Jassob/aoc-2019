@@ -53,7 +53,19 @@ part1 = head . mem . runMachine . mkMachine . prepare
   prepare = update 1 12 . update 2 2
 
 part2 :: [Int] -> Int
-part2 = undefined
+part2 =
+  (\(_, x, y) -> x * 100 + y)
+    . head
+    . dropWhile (\(v, _, _) -> v /= 19690720)
+    . fmap (\(m, x, y) -> (head . mem . runMachine $ m, x, y))
+    . prepare
+ where
+  prepare :: [Int] -> [(Machine, Int, Int)]
+  prepare is =
+    [ (mkMachine . update 1 x . update 2 y $ is, x, y)
+    | x <- [0 .. 99]
+    , y <- [0 .. 99]
+    ]
 
 main :: IO ()
 main = do
@@ -101,10 +113,7 @@ data TestCase i o = TC
   }
 
 inputTests :: [TestCase String [Int]]
-inputTests = map (mkTC readInput)
-  [ ("1,2,3,4,5", [1..5])
-  , ("1", [1])
-  ]
+inputTests = map (mkTC readInput) [("1,2,3,4,5", [1 .. 5]), ("1", [1])]
 
 updateTests :: [TestCase (Int, Int, [Int]) [Int]]
 updateTests = map
