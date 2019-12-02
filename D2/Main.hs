@@ -5,8 +5,52 @@ import           Control.Arrow                  ( (>>>) )
 import           Data.Char                      ( isDigit )
 import           System.Environment             ( getArgs )
 
+data Machine = IntCode
+  { mem :: [Int]
+  , pc :: Int
+  } deriving (Show, Eq)
+
+mkMachine :: [Int] -> Machine
+mkMachine is = IntCode { mem = is, pc = 0 }
+
+runMachine :: Machine -> Machine
+runMachine = fromLeft . eval
+ where
+  fromLeft (Left a) = a
+  fromLeft _        = error "fromLeft: Right"
+
+  eval :: Machine -> Either Machine Machine
+  eval m = case fetch m of
+    Nothing                -> Left m
+    Just (op, i1, i2, out) -> eval $ incPC (setMem m out (op i1 i2))
+
+   -- | Fetch opcode and operands if these are well formed and not Halt (99)
+  fetch :: Machine -> Maybe (Int -> Int -> Int, Int, Int, Int)
+  fetch (IntCode mem' pc') = case drop pc' mem' of
+    (1 : i1 : i2 : out : _) -> pure ((+), mem' !! i1, mem' !! i2, out)
+    (2 : i1 : i2 : out : _) -> pure ((*), mem' !! i1, mem' !! i2, out)
+    _                       -> Nothing
+
+  -- | Update memory in machine with value
+  setMem :: Machine -> Int -> Int -> Machine
+  setMem m' i val = m' { mem = update i val (mem m') }
+
+  -- | Increment the program counter
+  incPC :: Machine -> Machine
+  incPC m' = m' { pc = pc m' + 4 }
+
+update :: Int -> a -> [a] -> [a]
+update _ _ [] = error "update: empty list"
+update i v xs
+  | length xs > i = let (hs, _ : ts) = splitAt i xs in hs <> (v : ts)
+  | otherwise     = error "update: index out of bounds"
+
 part1 :: [Int] -> Int
-part1 = undefined
+part1 = head . mem . runMachine . mkMachine . prepare
+ where
+    -- | Set the initial state to when the computer crashed (1202 gravity error)
+  prepare :: [Int] -> [Int]
+  prepare = update 1 12 . update 2 2
 
 part2 :: [Int] -> Int
 part2 = undefined
@@ -45,8 +89,10 @@ readInput = span isDigit >>> \case
   (n , ""    ) -> [read n]
 
 runTestSuite :: IO ()
-runTestSuite = either putStrLn (const $ putStrLn "All tests passed!") $
+runTestSuite = either putStrLn (const $ putStrLn "All tests passed!") $ do
   runTests inputTests
+  runTests updateTests
+  runTests part1Tests
 
 data TestCase i o = TC
   { input :: i
@@ -58,6 +104,26 @@ inputTests :: [TestCase String [Int]]
 inputTests = map (mkTC readInput)
   [ ("1,2,3,4,5", [1..5])
   , ("1", [1])
+  ]
+
+updateTests :: [TestCase (Int, Int, [Int]) [Int]]
+updateTests = map
+  (mkTC (\(i, v, xs) -> update i v xs))
+  [ ((2, 1, [1, 2, 3, 4, 5]), [1, 2, 1, 4, 5])
+  , ((0, 2, [1])            , [2])
+  , ((2, 100, [1, 2, 3])    , [1, 2, 100])
+  ]
+
+part1Tests :: [TestCase Machine [Int]]
+part1Tests = map
+  (mkTC (mem . runMachine))
+  [ ( mkMachine [1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
+    , [3500, 9, 10, 70, 2, 3, 11, 0, 99, 30, 40, 50]
+    )
+  , (mkMachine [1, 0, 0, 0, 99]             , [2, 0, 0, 0, 99])
+  , (mkMachine [2, 3, 0, 3, 99]             , [2, 3, 0, 6, 99])
+  , (mkMachine [2, 4, 4, 5, 99, 0]          , [2, 4, 4, 5, 99, 9801])
+  , (mkMachine [1, 1, 1, 4, 99, 5, 6, 0, 99], [30, 1, 1, 4, 2, 5, 6, 0, 99])
   ]
 
 mkTC :: (i -> o) -> (i, o) -> TestCase i o
