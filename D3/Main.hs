@@ -4,6 +4,8 @@ module Main where
 import           Control.Arrow                  ( (>>>) )
 import           Data.List                      ( foldl' )
 import           Data.Maybe                     ( fromMaybe )
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
 import           Data.Set                       ( Set )
 import qualified Data.Set                      as Set
 import           System.Environment             ( getArgs )
@@ -26,6 +28,8 @@ instance Read Direction where
 data St = St
   { stMap :: Set Pos
   , stCurrPos :: Pos
+  , stSteps :: Map Pos Int
+  , stCurrSteps :: Int
   } deriving (Eq, Show)
 
 type Pos = (Int, Int)
@@ -54,13 +58,10 @@ posDist :: Pos -> Int
 posDist (x, y) = abs x + abs y
 
 emptySt :: St
-emptySt = St Set.empty (0, 0)
-
-resetCurrPos :: St -> St
-resetCurrPos st = st { stCurrPos = (0, 0) }
+emptySt = St Set.empty (0, 0) Map.empty 0
 
 eval :: St -> [Direction] -> St
-eval st = resetCurrPos . foldl' go st
+eval = foldl' go
  where
   go :: St -> Direction -> St
   go st' d =
@@ -69,25 +70,40 @@ eval st = resetCurrPos . foldl' go st
     in  setCurrPos curr $ foldl' addPoint st' points
 
   addPoint :: St -> Pos -> St
-  addPoint st' p = setCurrPos p $ st' { stMap = Set.insert p (stMap st') }
+  addPoint st' p = incCurrStep . setCurrPos p $ st'
+    { stMap   = Set.insert p (stMap st')
+    , stSteps = Map.insert p (stCurrSteps st') (stSteps st')
+    }
 
   setCurrPos :: Pos -> St -> St
   setCurrPos p st' = st' { stCurrPos = p }
 
-todo :: a
-todo = error "TODO"
+  incCurrStep :: St -> St
+  incCurrStep st' = st' { stCurrSteps = stCurrSteps st' + 1 }
+
+evalBoth :: [[Direction]] -> (St, St)
+evalBoth [d1, d2] = (eval emptySt d1, eval emptySt d2)
+evalBoth _        = error "evalBoth: Only two direction lists allowed"
 
 part1 :: [[Direction]] -> Int
 part1 =
   fromMaybe (error "part1: No overlap distance greater than 0")
     . Set.lookupGT 0
     . Set.map posDist
-    . uncurry Set.intersection
-    . (\(d1, d2) -> (stMap $ eval emptySt d1, stMap $ eval emptySt d2))
-    . (\[d1, d2] -> (d1, d2))
+    . (\(st1, st2) -> Set.intersection (stMap st1) (stMap st2))
+    . evalBoth
 
 part2 :: [[Direction]] -> Int
-part2 = todo
+part2 =
+  minimum
+    . Map.elems
+    . uncurry (Map.unionWith (+))
+    . (\(st1, st2) ->
+        let overlaps  = Set.intersection (stMap st1) (stMap st2)
+            filterKey = Map.filterWithKey (\k _ -> k `Set.member` overlaps)
+        in  (filterKey $ stSteps st1, filterKey $ stSteps st2)
+      )
+    . evalBoth
 
 main :: IO ()
 main = do
@@ -132,6 +148,7 @@ runTestSuite = either putStrLn (const $ putStrLn "All tests passed!") $ do
   runTests addDirectionTests
   runTests readDirectionTests
   runTests part1Tests
+  runTests part2Tests
 
 data TestCase i o = TC
   { input :: i
@@ -179,6 +196,22 @@ part1Tests = map
       , [U 98, R 91, D 20, R 16, D 67, R 40, U 7, R 15, U 6, R 7]
       ]
     , 135
+    )
+  ]
+
+part2Tests :: [TestCase [[Direction]] Int]
+part2Tests = map
+  (mkTC part2)
+  [ ([[R 8, U 5, L 5, D 3], [U 7, R 6, D 4, L 4]], 30)
+  , ( [ [R 75, D 30, R 83, U 83, L 12, D 49, R 71, U 7, L 72]
+      , [U 62, R 66, U 55, R 34, D 71, R 55, D 58, R 83]
+      ]
+    , 610
+    )
+  , ( [ [R 98, U 47, R 26, D 63, R 33, U 87, L 62, D 20, R 33, U 53, R 51]
+      , [U 98, R 91, D 20, R 16, D 67, R 40, U 7, R 15, U 6, R 7]
+      ]
+    , 415
     )
   ]
 
