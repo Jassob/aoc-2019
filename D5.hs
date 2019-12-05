@@ -1,8 +1,20 @@
 -- -*- dante-target: "D5" -*-
-{-# LANGUAGE LambdaCase, OverloadedLists #-}
+{-# LANGUAGE LambdaCase, OverloadedLists, FlexibleContexts #-}
 module Main where
 
 import           Control.Arrow                  ( (>>>) )
+import           Control.Monad                  ( when
+                                                , unless
+                                                )
+import           Control.Monad.IO.Class         ( MonadIO
+                                                , liftIO
+                                                )
+import           Control.Monad.State            ( MonadState(..)
+                                                , runStateT
+                                                , gets
+                                                , get
+                                                , modify
+                                                )
 import           Data.Char                      ( isDigit )
 import           Data.Vector                    ( Vector )
 import qualified Data.Vector                   as V
@@ -31,93 +43,93 @@ mkMachine :: Vector Int -> Machine
 mkMachine is = IntCode { mem = is, pc = 0 }
 
 run :: Machine -> IO Machine
-run m = case fetch m of
-  Just op | op == Halt -> pure m
-          | otherwise  -> incPC op <$> evalOp m op >>= run
-  Nothing -> error $ unwords
-    [ "eval: Malformed instruction at"
-    , show (pc m)
-    , "in"
-    , show (V.zip [0 .. V.length (mem m)] (mem m))
-    ]
+run m = snd <$> runStateT run' m
  where
-  evalOp :: Machine -> Op -> IO Machine
-  evalOp m' = \case
-    Add a b out  -> pure $ setMem m' out (a + b)
-    Mul a b out  -> pure $ setMem m' out (a * b)
-    ReadInt  out -> setMem m' out . read <$> getLine
-    PrintInt v   -> m <$ print v
-    JEQ b pc'    -> pure $ if b /= 0 then setPC pc' m' else m'
-    JNE b pc'    -> pure $ if b == 0 then setPC pc' m' else m'
-    LT a b out   -> pure $ setMem m' out $ if a < b then 1 else 0
-    EQ a b out   -> pure $ setMem m' out $ if a == b then 1 else 0
+  run' :: (MonadState Machine m, MonadIO m) => m ()
+  run' = fetch >>= \op -> unless (op == Halt) (evalOp op >> incPC op >> run')
+
+  -- | Evaluate operation with operands
+  evalOp :: (MonadIO m, MonadState Machine m) => Op -> m ()
+  evalOp = \case
+    Add a b out  -> setMem out (a + b)
+    Mul a b out  -> setMem out (a * b)
+    ReadInt  out -> setMem out . read =<< liftIO getLine
+    PrintInt v   -> liftIO $ print v
+    JEQ b pc'    -> when (b /= 0) (setPC pc')
+    JNE b pc'    -> when (b == 0) (setPC pc')
+    LT a b out   -> setMem out $ if a < b then 1 else 0
+    EQ a b out   -> setMem out $ if a == b then 1 else 0
     _            -> error "Not implemented"
 
   -- | Fetch opcode and operands if these are well formed and not Halt (99)
-  fetch :: Machine -> Maybe Op
-  fetch (IntCode mem' pc') = case unsnoc $ V.drop pc' mem' of
-    (0001, as) -> pure $ Add (pos as 0) (pos as 1) (imm as 2)
-    (0101, as) -> pure $ Add (imm as 0) (pos as 1) (imm as 2)
-    (1001, as) -> pure $ Add (pos as 0) (imm as 1) (imm as 2)
-    (1101, as) -> pure $ Add (imm as 0) (imm as 1) (imm as 2)
-    (0002, as) -> pure $ Mul (pos as 0) (pos as 1) (imm as 2)
-    (0102, as) -> pure $ Mul (imm as 0) (pos as 1) (imm as 2)
-    (1002, as) -> pure $ Mul (pos as 0) (imm as 1) (imm as 2)
-    (1102, as) -> pure $ Mul (imm as 0) (imm as 1) (imm as 2)
-    (03  , as) -> pure $ ReadInt (imm as 0)
-    (004 , as) -> pure $ PrintInt (pos as 0)
-    (104 , as) -> pure $ PrintInt (imm as 0)
-    (0005, as) -> pure $ JEQ (pos as 0) (pos as 1)
-    (0105, as) -> pure $ JEQ (imm as 0) (pos as 1)
-    (1005, as) -> pure $ JEQ (pos as 0) (imm as 1)
-    (1105, as) -> pure $ JEQ (imm as 0) (imm as 1)
-    (0006, as) -> pure $ JNE (pos as 0) (pos as 1)
-    (0106, as) -> pure $ JNE (imm as 0) (pos as 1)
-    (1006, as) -> pure $ JNE (pos as 0) (imm as 1)
-    (1106, as) -> pure $ JNE (imm as 0) (imm as 1)
-    (0007, as) -> pure $ LT (pos as 0) (pos as 1) (imm as 2)
-    (0107, as) -> pure $ LT (imm as 0) (pos as 1) (imm as 2)
-    (1007, as) -> pure $ LT (pos as 0) (imm as 1) (imm as 2)
-    (1107, as) -> pure $ LT (imm as 0) (imm as 1) (imm as 2)
-    (0008, as) -> pure $ EQ (pos as 0) (pos as 1) (imm as 2)
-    (0108, as) -> pure $ EQ (imm as 0) (pos as 1) (imm as 2)
-    (1008, as) -> pure $ EQ (pos as 0) (imm as 1) (imm as 2)
-    (1108, as) -> pure $ EQ (imm as 0) (imm as 1) (imm as 2)
+  fetch :: MonadState Machine m => m Op
+  fetch = get >>= \(IntCode mem' pc') -> case unsnoc $ V.drop pc' mem' of
+    (0001, as) -> Add <$> pos as 0 <*> pos as 1 <*> imm as 2
+    (0101, as) -> Add <$> imm as 0 <*> pos as 1 <*> imm as 2
+    (1001, as) -> Add <$> pos as 0 <*> imm as 1 <*> imm as 2
+    (1101, as) -> Add <$> imm as 0 <*> imm as 1 <*> imm as 2
+    (0002, as) -> Mul <$> pos as 0 <*> pos as 1 <*> imm as 2
+    (0102, as) -> Mul <$> imm as 0 <*> pos as 1 <*> imm as 2
+    (1002, as) -> Mul <$> pos as 0 <*> imm as 1 <*> imm as 2
+    (1102, as) -> Mul <$> imm as 0 <*> imm as 1 <*> imm as 2
+    (03  , as) -> ReadInt <$> imm as 0
+    (004 , as) -> PrintInt <$> pos as 0
+    (104 , as) -> PrintInt <$> imm as 0
+    (0005, as) -> JEQ <$> pos as 0 <*> pos as 1
+    (0105, as) -> JEQ <$> imm as 0 <*> pos as 1
+    (1005, as) -> JEQ <$> pos as 0 <*> imm as 1
+    (1105, as) -> JEQ <$> imm as 0 <*> imm as 1
+    (0006, as) -> JNE <$> pos as 0 <*> pos as 1
+    (0106, as) -> JNE <$> imm as 0 <*> pos as 1
+    (1006, as) -> JNE <$> pos as 0 <*> imm as 1
+    (1106, as) -> JNE <$> imm as 0 <*> imm as 1
+    (0007, as) -> LT <$> pos as 0 <*> pos as 1 <*> imm as 2
+    (0107, as) -> LT <$> imm as 0 <*> pos as 1 <*> imm as 2
+    (1007, as) -> LT <$> pos as 0 <*> imm as 1 <*> imm as 2
+    (1107, as) -> LT <$> imm as 0 <*> imm as 1 <*> imm as 2
+    (0008, as) -> EQ <$> pos as 0 <*> pos as 1 <*> imm as 2
+    (0108, as) -> EQ <$> imm as 0 <*> pos as 1 <*> imm as 2
+    (1008, as) -> EQ <$> pos as 0 <*> imm as 1 <*> imm as 2
+    (1108, as) -> EQ <$> imm as 0 <*> imm as 1 <*> imm as 2
     (99  , _ ) -> pure Halt
-    _          -> Nothing
+    _          -> fail $ unwords
+      [ "eval: Malformed instruction at"
+      , show (pc m)
+      , "in"
+      , show (V.zip [0 .. V.length (mem m)] (mem m))
+      ]
    where
-    imm :: Vector Int -> Int -> Int
-    imm as i = as V.! i
+    imm :: MonadState Machine m => Vector Int -> Int -> m Int
+    imm as = pure . (V.!) as
 
-    pos :: Vector Int -> Int -> Int
-    pos as i = mem' V.! (as V.! i)
+    pos :: MonadState Machine m => Vector Int -> Int -> m Int
+    pos as i = (V.! (as V.! i)) <$> gets mem
 
   unsnoc :: Vector a -> (a, Vector a)
   unsnoc v = (V.head v, V.drop 1 v)
 
   -- | Update memory in machine with value
-  setMem :: Machine -> Int -> Int -> Machine
-  setMem m' i val = m' { mem = mem m' V.// [(i, val)] }
+  setMem :: MonadState Machine m => Int -> Int -> m ()
+  setMem i val = modify (\s -> s { mem = mem s V.// [(i, val)] })
 
-  setPC :: Int -> Machine -> Machine
-  setPC pc' m' = m' { pc = pc' }
+  -- | Set program counter
+  setPC :: MonadState Machine m => Int -> m ()
+  setPC pc' = modify (\s -> s { pc = pc' })
 
   -- | Increment the program counter
-  incPC :: Op -> Machine -> Machine
-  incPC op m' = setPC (pc m' + amount) m'
+  incPC :: MonadState Machine m => Op -> m ()
+  incPC op = gets pc >>= setPC . (+) amount
    where
     amount = case op of
       Add{}      -> 4
       Mul{}      -> 4
       ReadInt{}  -> 2
       PrintInt{} -> 2
-      JEQ b _ | b /= 0    -> 0
-              | otherwise -> 3
-      JNE b _ | b == 0    -> 0
-              | otherwise -> 3
-      LT{} -> 4
-      EQ{} -> 4
-      Halt -> 1
+      JEQ b _    -> if b /= 0 then 0 else 3
+      JNE b _    -> if b == 0 then 0 else 3
+      LT{}       -> 4
+      EQ{}       -> 4
+      Halt       -> 1
 
 readInput :: String -> Vector Int
 readInput = span (\c -> isDigit c || c == '-') >>> \case
@@ -138,11 +150,10 @@ tests = do
   putStrLn "= Part 2"
   putStrLn "Enter any number:"
   _ <-
-    ( run
+    run
     . mkMachine
     $ readInput
         "3,21,1008,21,8,20,1005,20,22,107,8,21,20,1006,20,31,1106,0,36,98,0,0,1002,21,125,20,4,20,1105,1,46,104,999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99"
-    )
   putStrLn "The output should be: "
   putStrLn "* 999, if your input was < 8"
   putStrLn "* 1000, if your input was 8"
